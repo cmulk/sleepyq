@@ -1,7 +1,9 @@
 import requests
 import inflection
 import random
+import logging
 
+logger = logging.getLogger("sleepyq")
 
 RIGHT_NIGHT_STAND = 1
 LEFT_NIGHT_STAND = 2
@@ -163,7 +165,7 @@ class Sleepyq:
                 if type(retry) == requests.models.Response:
                     retry.raise_for_status()
                     return retry
-                print('Request timed out to', url)
+                logger.error('Request timed out to', url)
 
     def __feature_check(self, value, digit):
         return ((1 << digit) & value) > 0
@@ -174,9 +176,22 @@ class Sleepyq:
         if not self._login or not self._password:
             raise ValueError("username/password not set")
         data = {'login': self._login, 'password': self._password}
-        r = self._session.put(self._api+'/login', json=data)
+        # make login request and retry on request exceptions
+        # e.g. timeouts
+        retries = 0
+        while True:
+            try:
+                r = self._session.put(self._api+'/login', json=data, timeout=2)
+                break
+            except Exception as exp:
+                if retries < 4:
+                    logger.error(f"Error logging in - {repr(exp)} - Retrying")
+                    retries += 1
+                else:
+                    logging.error(f"Error logging in - {repr(exp)} - Exceeded retries")
+                    raise exp
         if r.status_code == 401:
-            raise ValueError("Incorect username or password")
+            raise ValueError("Incorrect username or password")
         if r.status_code == 403:
             raise ValueError("User Agent is blocked. May need to update GenUserAgent data?")
         if r.status_code not in (200, 201):
@@ -184,6 +199,7 @@ class Sleepyq:
                 code=r.status_code,
                 body=r.text,
             ))
+        logger.info("Login success.")
         self._session.params['_k'] = r.json()['key']
         return True
 
